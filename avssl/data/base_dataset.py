@@ -141,6 +141,8 @@ class BaseDataset(Dataset):
             ret_dict["text"] = text
         if "id" in self.data[index]:
             ret_dict["id"] = self.data[index]["id"]
+        if "example_id" in self.data[index]:
+            ret_dict["example_id"] = self.data[index]["example_id"]
 
         assert len(ret_dict) > 0, "dataset getitem must not be empty"
 

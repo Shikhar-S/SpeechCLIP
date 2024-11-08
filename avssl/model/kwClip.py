@@ -361,21 +361,23 @@ class KWClipBase(BaseLightningModel):
 
                     _k_values, _k_indices = torch.topk(
                         (
-                            emb_pinv.float()
-                            @ all_keyword_embeddings[i : i + _bsz]
-                            .view(-1, self.subword_embd_dim)
-                            .float()
-                            .reshape(-1, self.subword_embd_dim)
-                            .permute(1, 0)
-                        ).permute(1, 0)
-                        if self.config.model_settings.cascaded_branch.keyword.retrieve_method
-                        == "pseudo_inverse"
-                        else F.cosine_similarity(
-                            all_keyword_embeddings[i : i + _bsz].view(
-                                -1, self.subword_embd_dim, 1
-                            ),
-                            tokenEmbeddings.transpose(0, 1).unsqueeze(0),
-                            dim=1,
+                            (
+                                emb_pinv.float()
+                                @ all_keyword_embeddings[i : i + _bsz]
+                                .view(-1, self.subword_embd_dim)
+                                .float()
+                                .reshape(-1, self.subword_embd_dim)
+                                .permute(1, 0)
+                            ).permute(1, 0)
+                            if self.config.model_settings.cascaded_branch.keyword.retrieve_method
+                            == "pseudo_inverse"
+                            else F.cosine_similarity(
+                                all_keyword_embeddings[i : i + _bsz].view(
+                                    -1, self.subword_embd_dim, 1
+                                ),
+                                tokenEmbeddings.transpose(0, 1).unsqueeze(0),
+                                dim=1,
+                            )
                         ),
                         K,
                     )
@@ -395,9 +397,11 @@ class KWClipBase(BaseLightningModel):
                             # check if nearest K subword appears in gold text
                             top_k_toks = set(
                                 [
-                                    self.clip.reducedl2Original[_ind.item()]
-                                    if self.clip.selected_text_emb_ids is not None
-                                    else _ind.item()
+                                    (
+                                        self.clip.reducedl2Original[_ind.item()]
+                                        if self.clip.selected_text_emb_ids is not None
+                                        else _ind.item()
+                                    )
                                     for _ind in _k_indices[x, _keyword_i]
                                 ]
                             )
@@ -414,10 +418,12 @@ class KWClipBase(BaseLightningModel):
                                 tmp_outputs["keyword_{}".format(_keyword_i)].append(
                                     [
                                         self.clip.tokenizer.decoder[
-                                            self.clip.reducedl2Original[_ind.item()]
-                                            if self.clip.selected_text_emb_ids
-                                            is not None
-                                            else _ind.item()
+                                            (
+                                                self.clip.reducedl2Original[_ind.item()]
+                                                if self.clip.selected_text_emb_ids
+                                                is not None
+                                                else _ind.item()
+                                            )
                                         ],
                                         _dist.item(),
                                     ]
@@ -796,17 +802,22 @@ class KW_CascadedBranch(nn.Module):
                 init_bias=torch.mean(self.clip.model.token_embedding.weight, dim=0),
                 init_scale=torch.std(self.clip.model.token_embedding.weight, dim=0),
                 std_scale=config.model_settings.cascaded_branch.keyword.batchnorms.std_scale,
-                learnable=config.model_settings.cascaded_branch.keyword.batchnorms.learnable
-                if hasattr(
-                    config.model_settings.cascaded_branch.keyword.batchnorms,
-                    "learnable",
-                )
-                else True,
-                parallel=config.model_settings.cascaded_branch.keyword.batchnorms.parallel
-                if hasattr(
-                    config.model_settings.cascaded_branch.keyword.batchnorms, "parallel"
-                )
-                else False,
+                learnable=(
+                    config.model_settings.cascaded_branch.keyword.batchnorms.learnable
+                    if hasattr(
+                        config.model_settings.cascaded_branch.keyword.batchnorms,
+                        "learnable",
+                    )
+                    else True
+                ),
+                parallel=(
+                    config.model_settings.cascaded_branch.keyword.batchnorms.parallel
+                    if hasattr(
+                        config.model_settings.cascaded_branch.keyword.batchnorms,
+                        "parallel",
+                    )
+                    else False
+                ),
             )
 
     def _create_cls(self) -> torch.nn.Parameter:
@@ -1464,6 +1475,14 @@ class KWClip_GeneralTransformer(KWClipBase):
                 "cl_temp": self.criterion.current_temperature,
             }
         )
+        # if parallel_audio_feat is not None:
+        #     save_path = "/data/user_data/sbharad2/SpeechCLIP/data/flickr_dev_analysis_embeddings/audio/"
+        #     for ex_id, embedding_tensor in zip(
+        #         batch["example_id"], parallel_audio_feat
+        #     ):
+        #         sv_embed = embedding_tensor.cpu().detach().numpy()
+        #         np.save(save_path + ex_id + ".npy", sv_embed)
+
         return (
             losses,
             log_metrics,

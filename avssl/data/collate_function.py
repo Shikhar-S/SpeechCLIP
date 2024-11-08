@@ -25,6 +25,10 @@ def collate_general(batch: Tuple) -> dict:
                 return_dict[_key].append(_row[_key])
 
     for key in return_dict:
+        if key == "example_id":
+            return_dict[key] = return_dict[key]
+            continue
+
         if isinstance(return_dict[key][0], torch.Tensor):
             if key == "wav":
                 return_dict[key] = pad_sequence(return_dict[key], batch_first=True)

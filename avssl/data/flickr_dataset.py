@@ -69,12 +69,19 @@ class FlickrDataset(BaseDataset):
             if name in wav_names:
                 wav_names_to_paths[name].append(os.path.join(wav_base_path, p))
 
+        print(text_file, "File name")
         assert text_file in [
             "captions.txt",
             "Flickr8k.lemma.token.txt",
             "Flickr8k.token.txt",
+            "Flickr8k.dev_analysis.token.txt",
         ], "Flickr8K text file must be one of them {}".format(
-            ["captions.txt", "Flickr8k.lemma.token.txt", "Flickr8k.token.txt"]
+            [
+                "captions.txt",
+                "Flickr8k.lemma.token.txt",
+                "Flickr8k.token.txt",
+                "Flickr8k.dev_analysis.token.txt",
+            ]
         )
         caption_txt_path = os.path.join(self.dataset_root, text_file)
         imageName2captions = {}
@@ -111,6 +118,7 @@ class FlickrDataset(BaseDataset):
                     if _imgName not in imageName2captions:
                         imageName2captions[_imgName] = []
                     imageName2captions[_imgName].append(_caption)
+        print(f"Loaded captions for {len(imageName2captions)} images")
 
         id_pairs_path = os.path.join(self.dataset_root, "Flickr8k_idPairs.json")
         with open(id_pairs_path, "r") as f:
@@ -146,6 +154,7 @@ class FlickrDataset(BaseDataset):
                                 _entry["image"] = image_path
                             if "text" in self.modalities:
                                 _entry["text"] = imageName2captions[image_name][_subID]
+                            _entry["example_id"] = f"{line}#{_subID}"
                             self.data.append(_entry)
                     else:
                         self.data.append(

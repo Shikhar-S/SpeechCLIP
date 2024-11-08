@@ -88,6 +88,17 @@ class TrainSpeechClipBaseTask(BaseTask):
 
         self.config = config
 
+        print("==" * 40)
+        print(config)
+        print("==" * 40)
+        # Change config
+        config.data.dataset.name = "flickr_analysis"
+        print(config.data.dataset.name, "why!")
+        config.data.dataset.text_file = "Flickr8k.dev_analysis.token.txt"
+        print("==" * 40)
+        print(config)
+        print("==" * 40)
+
         if config.data.dataset.name == "flickr":
             if self.args.train:
                 tr_set = FlickrDataset(
@@ -132,6 +143,15 @@ class TrainSpeechClipBaseTask(BaseTask):
                     # modalities=["audio", "image", "text"],
                     **config.data.dataset,
                 )
+        elif config.data.dataset.name == "flickr_analysis":
+            assert self.args.test and not self.args.eval and not self.args.train
+            test_set = FlickrDataset(
+                split="dev_analysis",
+                # load_image=False,
+                # tokenizeText=False,
+                # modalities=["audio", "image", "text"],
+                **config.data.dataset,
+            )
 
         else:
             raise NotImplementedError(f"Unknown dataset {config.data.dataset.name}")
