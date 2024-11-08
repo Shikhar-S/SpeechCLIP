@@ -141,13 +141,19 @@ class TrainSpeechClipBaseTask(BaseTask):
                 )
         elif config.data.dataset.name == "flickr_analysis":
             assert self.args.test and not self.args.eval and not self.args.train
-            test_set = FlickrDataset(
-                split="dev_analysis",
-                # load_image=False,
-                # tokenizeText=False,
-                # modalities=["audio", "image", "text"],
-                **config.data.dataset,
-            )
+            if config.data.dataset.text_file == "Flickr8k.flickr_dev_sampled.token.txt":
+                test_set = FlickrDataset(
+                    split="flickr_dev_sampled",
+                    **config.data.dataset,
+                )
+            elif (
+                config.data.dataset.text_file
+                == "Flickr8k.flickr_train_sampled.token.txt"
+            ):
+                test_set = FlickrDataset(
+                    split="flickr_train_sampled",
+                    **config.data.dataset,
+                )
 
         else:
             raise NotImplementedError(f"Unknown dataset {config.data.dataset.name}")

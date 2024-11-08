@@ -120,7 +120,9 @@ class FlickrDataset(BaseDataset):
                     if _imgName not in imageName2captions:
                         imageName2captions[_imgName] = []
                     imageName2captions[_imgName].append(_caption)
-        print(f"Loaded captions for {len(imageName2captions)} images")
+        print(
+            f"Loaded captions for {len(imageName2captions)} images from {caption_txt_path}"
+        )
 
         id_pairs_path = os.path.join(self.dataset_root, "Flickr8k_idPairs.json")
         with open(id_pairs_path, "r") as f:
@@ -149,7 +151,8 @@ class FlickrDataset(BaseDataset):
                             _subID = int(
                                 os.path.basename(p).split("_")[-1].replace(".wav", "")
                             )
-
+                            if _subID != 0 and "sampled" in text_file:
+                                continue
                             if "audio" in self.modalities:
                                 _entry["wav"] = p
                             if "image" in self.modalities:
