@@ -14,6 +14,10 @@ def add_general_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     parser.add_argument(
         "--save_path", type=str, default="", help="Directory to save ckpts."
     )
+    parser.add_argument(
+        "--text_file", type=str, default="", help="Override dataset text file"
+    )
+    parser.add_argument("--name", type=str, default="", help="Override dataset name")
 
     # Mode
     parser.add_argument("--train", action="store_true", help="Train model")

@@ -1475,13 +1475,18 @@ class KWClip_GeneralTransformer(KWClipBase):
                 "cl_temp": self.criterion.current_temperature,
             }
         )
-        # if parallel_audio_feat is not None:
-        #     save_path = "/data/user_data/sbharad2/SpeechCLIP/data/flickr_dev_analysis_embeddings/audio/"
-        #     for ex_id, embedding_tensor in zip(
-        #         batch["example_id"], parallel_audio_feat
-        #     ):
-        #         sv_embed = embedding_tensor.cpu().detach().numpy()
-        #         np.save(save_path + ex_id + ".npy", sv_embed)
+        if (
+            self.config.data.dataset.name == "flickr_analysis"
+            and parallel_audio_feat is not None
+        ):
+
+            save_path = f"/data/user_data/sbharad2/SpeechCLIP/data/{self.config.data.dataset.text_file}.audio_embeddings/"
+            os.makedirs(save_path, exist_ok=True)
+            for ex_id, embedding_tensor in zip(
+                batch["example_id"], parallel_audio_feat
+            ):
+                sv_embed = embedding_tensor.cpu().detach().numpy()
+                np.save(save_path + ex_id + ".npy", sv_embed)
 
         return (
             losses,

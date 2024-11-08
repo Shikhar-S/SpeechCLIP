@@ -70,6 +70,13 @@ class TrainSpeechClipBaseTask(BaseTask):
                 model.config.data.dataset.dataset_root = self.args.dataset_root
             del self.args.dataset_root
 
+            if self.args.name:
+                model.config.data.dataset.name = self.args.name
+                del self.args.name
+            if self.args.text_file:
+                model.config.data.dataset.text_file = self.args.text_file
+                del self.args.text_file
+
             config = model.config
             config = config.to_dict()
             config.update(vars(self.args))
@@ -87,17 +94,6 @@ class TrainSpeechClipBaseTask(BaseTask):
             config.data.dataset.modalities = ["audio", "image", "text"]
 
         self.config = config
-
-        print("==" * 40)
-        print(config)
-        print("==" * 40)
-        # Change config
-        config.data.dataset.name = "flickr_analysis"
-        print(config.data.dataset.name, "why!")
-        config.data.dataset.text_file = "Flickr8k.dev_analysis.token.txt"
-        print("==" * 40)
-        print(config)
-        print("==" * 40)
 
         if config.data.dataset.name == "flickr":
             if self.args.train:

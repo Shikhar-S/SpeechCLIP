@@ -74,13 +74,15 @@ class FlickrDataset(BaseDataset):
             "captions.txt",
             "Flickr8k.lemma.token.txt",
             "Flickr8k.token.txt",
-            "Flickr8k.dev_analysis.token.txt",
+            "Flickr8k.flickr_dev_sampled.token.txt",
+            "Flickr8k.flickr_train_sampled.token.txt",
         ], "Flickr8K text file must be one of them {}".format(
             [
                 "captions.txt",
                 "Flickr8k.lemma.token.txt",
                 "Flickr8k.token.txt",
-                "Flickr8k.dev_analysis.token.txt",
+                "Flickr8k.flickr_dev_sampled.token.txt",
+                "Flickr8k.flickr_train_sampled.token.txt",
             ]
         )
         caption_txt_path = os.path.join(self.dataset_root, text_file)
