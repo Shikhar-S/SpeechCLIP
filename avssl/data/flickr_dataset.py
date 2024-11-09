@@ -53,6 +53,7 @@ class FlickrDataset(BaseDataset):
         image_list_txt = os.path.join(
             self.dataset_root, f"Flickr_8k.{self.split}Images.txt"
         )
+        print(f"Preparing data for images from {image_list_txt}")
 
         if wav_rm_silence:
             print("Using wav w/o silence data")
@@ -69,7 +70,6 @@ class FlickrDataset(BaseDataset):
             if name in wav_names:
                 wav_names_to_paths[name].append(os.path.join(wav_base_path, p))
 
-        print(text_file, "File name")
         assert text_file in [
             "captions.txt",
             "Flickr8k.lemma.token.txt",
@@ -109,6 +109,7 @@ class FlickrDataset(BaseDataset):
             with open(caption_txt_path, "r") as f:
                 for i, _line in enumerate(f.readlines()):
                     _line = _line.strip()
+                    caption_number = int(_line.split("\t")[0].split("#")[-1])
                     _out = re.split("#[0-9]", _line)
                     assert len(_out) == 2, _line
                     _imgName, _caption = re.split("#[0-9]", _line)
@@ -118,11 +119,32 @@ class FlickrDataset(BaseDataset):
                         _caption = _caption[:-1].strip()
 
                     if _imgName not in imageName2captions:
-                        imageName2captions[_imgName] = []
-                    imageName2captions[_imgName].append(_caption)
+                        imageName2captions[_imgName] = [
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                        ]
+                        # 5 empty captions
+                    imageName2captions[_imgName][
+                        caption_number
+                    ] = _caption  # caption_number is the number after # in the caption file name
         print(
             f"Loaded captions for {len(imageName2captions)} images from {caption_txt_path}"
         )
+
+        all_caption_file_names = set()
+        if "sampled" in text_file:
+            with open(caption_txt_path) as f:
+                for i, _line in enumerate(f.readlines()):
+                    _line = _line.strip().split("\t")[0]
+                    wav_file_name = _line.replace(".jpg#", "_") + ".wav"
+                    if wav_file_name[:-6] not in wav_names:
+                        print("Missing ", wav_file_name)
+                    all_caption_file_names.add(wav_file_name)
+            print(f"Loaded {len(all_caption_file_names)} caption file names")
+            print(f"First 5: {list(all_caption_file_names)[:5]}")
 
         id_pairs_path = os.path.join(self.dataset_root, "Flickr8k_idPairs.json")
         with open(id_pairs_path, "r") as f:
@@ -130,10 +152,12 @@ class FlickrDataset(BaseDataset):
             id2Filename = _data["id2Filename"]
             filename2Id = _data["filename2Id"]
 
+        skipped = 0
         with open(image_list_txt, "r") as fp:
             for line in fp:
                 line = line.strip()
                 if line == "":
+                    print("skipping empty line")
                     continue
 
                 image_name = line.split(".")[0]  # removed ".jpg"
@@ -151,8 +175,10 @@ class FlickrDataset(BaseDataset):
                             _subID = int(
                                 os.path.basename(p).split("_")[-1].replace(".wav", "")
                             )
-                            if _subID != 0 and "sampled" in text_file:
-                                continue
+                            if "sampled" in text_file:
+                                if p.split("/")[-1] not in all_caption_file_names:
+                                    skipped += 1
+                                    continue
                             if "audio" in self.modalities:
                                 _entry["wav"] = p
                             if "image" in self.modalities:
@@ -168,5 +194,9 @@ class FlickrDataset(BaseDataset):
                                 "id": filename2Id[image_name],
                             }
                         )
+                else:
+                    print(f"Skiping because there is no audio for {image_name}")
 
-        logger.info(f"Flickr8k ({self.split}): {len(self.data)} samples")
+        logger.info(
+            f"Flickr8k ({self.split}): {len(self.data)} samples and skipped {skipped}"
+        )
