@@ -76,6 +76,9 @@ class TrainSpeechClipBaseTask(BaseTask):
             if self.args.text_file:
                 model.config.data.dataset.text_file = self.args.text_file
                 del self.args.text_file
+            if self.args.snr:
+                model.config.data.dataset.snr = self.args.snr
+                del self.args.snr
 
             config = model.config
             config = config.to_dict()

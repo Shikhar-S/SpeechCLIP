@@ -13,6 +13,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.loggers.wandb import WandbLogger
 from torch import nn
 from torch.nn import functional as F
+import torchaudio.transforms as T
 
 from ..base import OrderedNamespace
 from ..module import (
@@ -1406,6 +1407,12 @@ class KWClip_GeneralTransformer(KWClipBase):
         # update device information to clip model
         self.clip.update_device(self.device)
 
+        if self.config.data.dataset.snr > 0:
+            snr = self.config.data.dataset.snr
+            noise = torch.randn_like(wav)
+            add_noise = T.AddNoise()
+            wav = add_noise(wav, noise, snr=torch.tensor([snr], device=self.device))
+
         audio_feat, audio_len = self.forward_audio(wav, wav_len)
 
         image_feat = self.forward_image(image)
@@ -1475,12 +1482,16 @@ class KWClip_GeneralTransformer(KWClipBase):
                 "cl_temp": self.criterion.current_temperature,
             }
         )
+
         if (
             self.config.data.dataset.name == "flickr_analysis"
             and parallel_audio_feat is not None
         ):
-
-            save_path = f"/data/user_data/sbharad2/SpeechCLIP/data/{self.config.data.dataset.text_file}.audio_embeddings/"
+            snr = self.config.data.dataset.snr
+            if snr > 0:
+                save_path = f"/data/user_data/sbharad2/SpeechCLIP/data/{self.config.data.dataset.text_file}.audio_embeddings/"
+            else:
+                save_path = f"/data/user_data/sbharad2/SpeechCLIP/data/noisy.{self.config.data.dataset.text_file}.audio_embeddings.snr{snr}/"
             os.makedirs(save_path, exist_ok=True)
             for ex_id, embedding_tensor in zip(
                 batch["example_id"], parallel_audio_feat

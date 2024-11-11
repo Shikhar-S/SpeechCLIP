@@ -19,6 +19,10 @@ def add_general_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     )
     parser.add_argument("--name", type=str, default="", help="Override dataset name")
 
+    parser.add_argument(
+        "--snr", type=float, default=-1.0, help="Add noise with snr if positive."
+    )
+
     # Mode
     parser.add_argument("--train", action="store_true", help="Train model")
     parser.add_argument("--eval", action="store_true", help="Run dev set")
