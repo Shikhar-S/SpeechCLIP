@@ -21,6 +21,11 @@ def add_general_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     parser.add_argument("--test", action="store_true", help="Run test set")
     parser.add_argument("--ckpt", type=str, default="", help="Load from checkpoint")
     parser.add_argument("--resume", type=str, default="", help="Checkpoint to resume.")
+    parser.add_argument(
+        "--load_model_config",
+        action="store_true",
+        help="Load model config from checkpoint.",
+    )
 
     # Hparams
     parser.add_argument("--njobs", type=int, default=0, help="Number of workers")

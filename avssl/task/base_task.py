@@ -14,6 +14,14 @@ from ..data import CoCoDataset, FlickrDataset, collate_general
 from ..util import add_general_arguments, set_logging, set_pl_logger
 
 
+class CustomProgressBar(TQDMProgressBar):
+    def get_metrics(self, trainer, pl_module):
+        metrics = super().get_metrics(trainer, pl_module)
+        # Remove gradient norm from the progress bar
+        metrics = {k: v for k, v in metrics.items() if "grad" not in k}
+        return metrics
+
+
 class BaseTask:
     def __init__(self):
         self.args = None
@@ -70,10 +78,14 @@ class TrainSpeechClipBaseTask(BaseTask):
                 model.config.data.dataset.dataset_root = self.args.dataset_root
             del self.args.dataset_root
 
-            config = model.config
-            config = config.to_dict()
-            config.update(vars(self.args))
-            config = OrderedNamespace(config)
+            if self.args.load_model_config:
+                config = model.config
+                config = config.to_dict()
+                config.update(vars(self.args))
+                config = OrderedNamespace(config)
+            else:
+                config = yaml.load(open(self.args.config, "r"), Loader=yaml.FullLoader)
+                config = OrderedNamespace([self.args, config])
             model.config = config
 
         else:
@@ -98,6 +110,10 @@ class TrainSpeechClipBaseTask(BaseTask):
                     **config.data.dataset,
                 )
             if self.args.train or self.args.eval:
+                old_load_image = config.data.dataset.load_image
+                old_modalities = config.data.dataset.modalities
+                config.data.dataset.modalities = ["audio", "text", "image"]
+                config.data.dataset.load_image = True
                 dv_set = FlickrDataset(
                     split="dev",
                     # load_image=False,
@@ -105,7 +121,13 @@ class TrainSpeechClipBaseTask(BaseTask):
                     # modalities=["audio", "image", "text"],
                     **config.data.dataset,
                 )
+                config.data.dataset.load_image = old_load_image
+                config.data.dataset.modalities = old_modalities
             if self.args.test:
+                old_load_image = config.data.dataset.load_image
+                old_modalities = config.data.dataset.modalities
+                config.data.dataset.modalities = ["audio", "text", "image"]
+                config.data.dataset.load_image = True
                 test_set = FlickrDataset(
                     split="test",
                     # load_image=False,
@@ -113,6 +135,8 @@ class TrainSpeechClipBaseTask(BaseTask):
                     # modalities=["audio", "image", "text"],
                     **config.data.dataset,
                 )
+                config.data.dataset.load_image = old_load_image
+                config.data.dataset.modalities = old_modalities
         elif config.data.dataset.name == "coco":
             if self.args.train:
                 tr_set = CoCoDataset(
@@ -136,12 +160,16 @@ class TrainSpeechClipBaseTask(BaseTask):
         else:
             raise NotImplementedError(f"Unknown dataset {config.data.dataset.name}")
 
+        slurm_cpus = os.getenv("SLURM_CPUS_PER_TASK")
+        n_jobs = int(slurm_cpus) if slurm_cpus else os.cpu_count()
+        print(f"Number of workers: {n_jobs}")
+
         if self.args.train:
             tr_loader = DataLoader(
                 tr_set,
                 batch_size=config.data.batch_size,
                 shuffle=True,
-                num_workers=config.njobs,
+                num_workers=n_jobs,
                 pin_memory=True,
                 drop_last=True,
                 collate_fn=collate_general,
@@ -154,7 +182,7 @@ class TrainSpeechClipBaseTask(BaseTask):
                 dv_set,
                 batch_size=config.data.dev_batch_size,
                 shuffle=False,
-                num_workers=config.njobs,
+                num_workers=n_jobs,
                 pin_memory=True,
                 drop_last=False,
                 collate_fn=collate_general,
@@ -164,7 +192,7 @@ class TrainSpeechClipBaseTask(BaseTask):
                 test_set,
                 batch_size=config.data.dev_batch_size,
                 shuffle=False,
-                num_workers=config.njobs,
+                num_workers=n_jobs,
                 pin_memory=True,
                 drop_last=False,
                 collate_fn=collate_general,
@@ -202,13 +230,15 @@ class TrainSpeechClipBaseTask(BaseTask):
         config.gpus = self.args.gpus
         trainer = Trainer(
             callbacks=[
-                TQDMProgressBar(),
+                CustomProgressBar(),
                 model_checkpoint_val_loss,
                 model_checkpoint_recall,
                 *custom_trainer_callbacks,
             ],
             enable_progress_bar=True,
-            gpus=config.gpus,
+            # gpus=config.gpus,
+            accelerator="gpu",
+            devices=config.gpus,
             resume_from_checkpoint=None if self.args.resume == "" else self.args.resume,
             **config.trainer,
         )
@@ -242,4 +272,5 @@ class TrainSpeechClipBaseTask(BaseTask):
             #     trainer.test(model, test_loader, ckpt_path=config.ckpt)
             # else:
             #     # use validate function instead.
+            # print(vars(config))
             trainer.validate(model, test_loader, ckpt_path=config.ckpt)

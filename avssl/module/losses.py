@@ -4,6 +4,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+MAX_EYE = 256
+
 
 class SupConLoss(nn.Module):
     """
@@ -123,9 +125,6 @@ class SupConLoss(nn.Module):
         return loss
 
 
-MAX_EYE = 256
-
-
 class MaskedContrastiveLoss(nn.Module):
     def __init__(
         self,
@@ -195,7 +194,6 @@ class MaskedContrastiveLoss(nn.Module):
         Returns:
             torch.Tensor: Loss.
         """
-
         assert feat_A.shape == feat_B.shape, (feat_A.shape, feat_B.shape)
         B = feat_A.shape[0]
 

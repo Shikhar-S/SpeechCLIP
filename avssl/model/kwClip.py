@@ -22,6 +22,7 @@ from ..module import (
     S3prlSpeechEncoderPlus,
     losses,
     mutualRetrieval,
+    WhisperEncoder,
 )
 from ..module.kw_modules import TransformerModels
 from ..module.speechclip_c_modules import vector_quantizers
@@ -32,6 +33,9 @@ from .base_model import BaseLightningModel
 
 __all__ = [
     "KWClip_GeneralTransformer",
+    "KWClip_SpeechText",
+    "ImgMean_SpeechText",
+    "TxtMean_SpeechText",
 ]
 
 """METRIC_REDUCEFN_MAPPING
@@ -61,6 +65,8 @@ class KWClipBase(BaseLightningModel):
             self.audio_encoder = S3prlSpeechEncoderPlus(**config.audio_encoder)
         elif self.audio_encoder_type == "FairseqHubert":
             self.audio_encoder = FairseqSpeechEncoder_Hubert(**config.audio_encoder)
+        elif self.audio_encoder_type == "whisper":
+            self.audio_encoder = WhisperEncoder(**config.audio_encoder)
         else:
             logger.warning("No audio encoder loaded")
 
@@ -68,6 +74,8 @@ class KWClipBase(BaseLightningModel):
         self.clip = ClipModel(
             **config.clip,
         )
+        self.initialize_weights = config.model_settings.get("initialize_weights", False)
+        logger.info("Initialize weights: {}".format(self.initialize_weights))
 
         if hasattr(self, "audio_encoder"):
             self.audio_embd_dim = self.audio_encoder.out_dim
@@ -110,6 +118,7 @@ class KWClipBase(BaseLightningModel):
         if self.audio_encoder_type in [
             "s3prl_plus",
             "FairseqHubert",
+            "whisper",
         ]:
             return self.audio_encoder(
                 wav, wav_len, return_hidden_states=return_hidden_states
@@ -361,21 +370,23 @@ class KWClipBase(BaseLightningModel):
 
                     _k_values, _k_indices = torch.topk(
                         (
-                            emb_pinv.float()
-                            @ all_keyword_embeddings[i : i + _bsz]
-                            .view(-1, self.subword_embd_dim)
-                            .float()
-                            .reshape(-1, self.subword_embd_dim)
-                            .permute(1, 0)
-                        ).permute(1, 0)
-                        if self.config.model_settings.cascaded_branch.keyword.retrieve_method
-                        == "pseudo_inverse"
-                        else F.cosine_similarity(
-                            all_keyword_embeddings[i : i + _bsz].view(
-                                -1, self.subword_embd_dim, 1
-                            ),
-                            tokenEmbeddings.transpose(0, 1).unsqueeze(0),
-                            dim=1,
+                            (
+                                emb_pinv.float()
+                                @ all_keyword_embeddings[i : i + _bsz]
+                                .view(-1, self.subword_embd_dim)
+                                .float()
+                                .reshape(-1, self.subword_embd_dim)
+                                .permute(1, 0)
+                            ).permute(1, 0)
+                            if self.config.model_settings.cascaded_branch.keyword.retrieve_method
+                            == "pseudo_inverse"
+                            else F.cosine_similarity(
+                                all_keyword_embeddings[i : i + _bsz].view(
+                                    -1, self.subword_embd_dim, 1
+                                ),
+                                tokenEmbeddings.transpose(0, 1).unsqueeze(0),
+                                dim=1,
+                            )
                         ),
                         K,
                     )
@@ -395,9 +406,11 @@ class KWClipBase(BaseLightningModel):
                             # check if nearest K subword appears in gold text
                             top_k_toks = set(
                                 [
-                                    self.clip.reducedl2Original[_ind.item()]
-                                    if self.clip.selected_text_emb_ids is not None
-                                    else _ind.item()
+                                    (
+                                        self.clip.reducedl2Original[_ind.item()]
+                                        if self.clip.selected_text_emb_ids is not None
+                                        else _ind.item()
+                                    )
                                     for _ind in _k_indices[x, _keyword_i]
                                 ]
                             )
@@ -414,10 +427,12 @@ class KWClipBase(BaseLightningModel):
                                 tmp_outputs["keyword_{}".format(_keyword_i)].append(
                                     [
                                         self.clip.tokenizer.decoder[
-                                            self.clip.reducedl2Original[_ind.item()]
-                                            if self.clip.selected_text_emb_ids
-                                            is not None
-                                            else _ind.item()
+                                            (
+                                                self.clip.reducedl2Original[_ind.item()]
+                                                if self.clip.selected_text_emb_ids
+                                                is not None
+                                                else _ind.item()
+                                            )
                                         ],
                                         _dist.item(),
                                     ]
@@ -477,10 +492,8 @@ class KWClipBase(BaseLightningModel):
         all_img_feats = torch.stack([x for _, x in id_img_pairs.items()], dim=0)
         all_img_feats_id = torch.LongTensor(list(id_img_pairs.keys()))
 
-        print(
-            "Total #{} images, #{} audio".format(
-                len(all_img_feats), len(all_audo_feats)
-            )
+        logging.info(
+            f"Total #{len(all_img_feats)} images, #{len(all_audo_feats)} audio"
         )
 
         # calculate dot product
@@ -663,6 +676,14 @@ class KWClipBase(BaseLightningModel):
 
         return my_params
 
+    def _init_weights(self, param):
+        logging.info(f"Initializing {param.shape}")
+        if param.ndimension() > 1:
+            # nn.init.xavier_uniform_(param)  # Xavier initialization
+            nn.init.normal_(param, 0, 0.02)
+        else:
+            nn.init.zeros_(param)  # Initialize biases to zero
+
     def configure_optimizers(self) -> Tuple[list, list]:
         """configure_optimizers
 
@@ -673,6 +694,10 @@ class KWClipBase(BaseLightningModel):
         schedulers = []
 
         my_params = self.getTrainableParams()
+
+        if self.initialize_weights:
+            for param in my_params:
+                self._init_weights(param)
 
         audio_optimizer = getattr(torch.optim, self.config.audio_encoder.optim.name)(
             my_params,
@@ -796,17 +821,22 @@ class KW_CascadedBranch(nn.Module):
                 init_bias=torch.mean(self.clip.model.token_embedding.weight, dim=0),
                 init_scale=torch.std(self.clip.model.token_embedding.weight, dim=0),
                 std_scale=config.model_settings.cascaded_branch.keyword.batchnorms.std_scale,
-                learnable=config.model_settings.cascaded_branch.keyword.batchnorms.learnable
-                if hasattr(
-                    config.model_settings.cascaded_branch.keyword.batchnorms,
-                    "learnable",
-                )
-                else True,
-                parallel=config.model_settings.cascaded_branch.keyword.batchnorms.parallel
-                if hasattr(
-                    config.model_settings.cascaded_branch.keyword.batchnorms, "parallel"
-                )
-                else False,
+                learnable=(
+                    config.model_settings.cascaded_branch.keyword.batchnorms.learnable
+                    if hasattr(
+                        config.model_settings.cascaded_branch.keyword.batchnorms,
+                        "learnable",
+                    )
+                    else True
+                ),
+                parallel=(
+                    config.model_settings.cascaded_branch.keyword.batchnorms.parallel
+                    if hasattr(
+                        config.model_settings.cascaded_branch.keyword.batchnorms,
+                        "parallel",
+                    )
+                    else False
+                ),
             )
 
     def _create_cls(self) -> torch.nn.Parameter:
@@ -1165,7 +1195,7 @@ class KWClip_GeneralTransformer(KWClipBase):
         )
         if parallel_branch_projection is not None:
             logger.info(
-                f"parallel_branch_projection dims:{parallel_branch_projection.dimensions} droupout:{parallel_branch_projection.dropout}"
+                f"parallel_branch_projection dims:{parallel_branch_projection.dimensions} dropout:{parallel_branch_projection.dropout}"
             )
             self.p_branch_proj_net = MLPLayers(
                 units=parallel_branch_projection.dimensions,
@@ -1494,3 +1524,424 @@ class KWClip_GeneralTransformer(KWClipBase):
         audio_feat, audio_len = self.forward_audio(wav, wav_len)
 
         return self.cascaded_branch.getAttentionMap(audio_feat, audio_len)
+
+
+class KWClip_SpeechText(KWClip_GeneralTransformer):
+
+    def __init__(self, config: OrderedNamespace) -> None:
+        """init
+
+        Args:
+            config (OrderedNamespace): config of the model
+        """
+        super().__init__(config)
+        self.txt_enc_proj_net = None
+        # Load text encoder from clip and possibly a linear projection layer
+
+    def forward(self, batch):
+        wav = batch["wav"]
+        text = batch["text"]
+        id = batch["id"]
+        wav_len = batch["wav_len"]
+
+        # update device information to clip model
+        self.clip.update_device(self.device)
+
+        audio_feat, audio_len = self.forward_audio(wav, wav_len)
+
+        assert self.cascaded_branch is None, "Cascaded branch should not be defined"
+        assert self.parallel_branch is not None, "Parallel branch should be defined"
+
+        # Encode txt with frozen clip txt enc
+        text_feat = self.forward_text(text.view(-1, 77))
+
+        if self.txt_enc_proj_net is not None:
+            text_feat = self.txt_enc_proj_net(text_feat)
+
+        parallel_audio_feat = None
+
+        if self.parallel_branch is not None:
+            parallel_audio_feat = self.parallel_branch(
+                audio_feat=audio_feat,
+                audio_len=audio_len,
+            )
+            if self.p_branch_proj_net is not None:
+                parallel_audio_feat = self.p_branch_proj_net(parallel_audio_feat)
+
+        text_feat = text_feat / text_feat.norm(dim=-1, keepdim=True)
+
+        losses = {
+            "id": id,
+            "text_feat": text_feat,
+        }
+        log_metrics = {}
+
+        if parallel_audio_feat is not None:
+            parallel_audio_feat = parallel_audio_feat / parallel_audio_feat.norm(
+                dim=-1, keepdim=True
+            )
+            losses["parallel_audio_feat"] = parallel_audio_feat
+
+        # if self.config.model_settings.cascaded_objective_weight > 0:
+        #     log_metrics["softmax_temp"] = vq_results["temp"]
+
+        log_metrics.update(
+            {
+                "cl_temp": self.criterion.current_temperature,
+            }
+        )
+
+        return_dict = {
+            "parallel_audio_feat": parallel_audio_feat,
+            "text_feat": text_feat,
+            "id": id,
+        }
+
+        if not self.training:
+            img = batch["image"]
+            image_feat = self.forward_image(img)
+            image_feat = image_feat / image_feat.norm(dim=-1, keepdim=True)
+            return_dict["image_feat"] = image_feat
+
+        return (
+            losses,
+            log_metrics,
+            return_dict,
+        )
+
+    def getTrainableParams(self) -> list:
+        """getTrainableParams
+
+        Returns:
+            list: list of trainable params in this class
+        """
+        _params = super().getTrainableParams()
+        if self.txt_enc_proj_net is not None:
+            logger.info("Add Text projection net parameters")
+            _params += list(self.txt_enc_proj_net.parameters())
+
+        return _params
+
+    def compute_loss(self, input_feats: dict):
+        """compute the loss here
+
+        Args:
+            input_feats (dict): the feats required for computing loss
+        """
+        assert isinstance(input_feats, dict)
+        assert "id" in input_feats
+        assert "parallel_audio_feat" in input_feats
+        assert "text_feat" in input_feats
+
+        parallel_audio_feat = (
+            input_feats["parallel_audio_feat"].float()
+            if "parallel_audio_feat" in input_feats
+            else None
+        )
+        text_feat = input_feats["text_feat"].float()
+        id = input_feats["id"]
+
+        losses = {"loss": 0}
+
+        if self.config.model_settings.parallel_objective_weight > 0:
+            losses["p_cl_loss"] = self.criterion(
+                feat_A=parallel_audio_feat,
+                feat_B=text_feat,
+                index=id,
+            )
+            losses["loss"] += (
+                self.config.model_settings.parallel_objective_weight
+                * losses["p_cl_loss"]
+            )
+
+        return losses
+
+    def validation_epoch_end(self, outputs):
+        all_audio_feats = torch.cat([x["audio_feat"] for x in outputs], dim=0)
+        all_text_feats = torch.cat([x["text_feat"] for x in outputs], dim=0)
+        all_img_feats = torch.cat([x["image_feat"] for x in outputs], dim=0)
+
+        if "id" in outputs[0] and outputs[0]["id"] is not None:
+            all_ids = torch.cat([x["id"] for x in outputs], dim=0)
+        else:
+            all_ids = torch.arange(len(all_text_feats))
+        all_audio_feats_id = all_ids
+        all_text_feats_id = all_ids
+        all_img_feats_id = all_ids
+
+        logging.info(
+            f"Total #{len(all_text_feats_id)} texts, #{len(all_audio_feats_id)} audio, #{len(all_img_feats_id)} images."
+        )
+        assert len(all_text_feats) == len(
+            all_audio_feats
+        ), f"Mismatch in lengths between audio and text {len(all_audio_feats)} vs {len(all_text_feats)}"
+        assert len(all_img_feats) == len(
+            all_audio_feats
+        ), f"Mismatch in lengths between audio and image {len(all_img_feats)} vs {len(all_audio_feats)}"
+
+        # calculate dot product
+        txt_score_per_audio = torch.matmul(
+            all_audio_feats.float(), all_text_feats.float().T
+        ).cpu()
+        score_per_text = txt_score_per_audio.T
+        AT_answers = all_audio_feats_id
+        TA_answers = all_text_feats_id
+
+        # Log metrics for speech-text retrieval
+        super().reportRetrieval(
+            score_per_A=txt_score_per_audio,
+            score_per_B=score_per_text,
+            AB_answers=AT_answers,
+            BA_answers=TA_answers,
+            metadata={
+                "modality_A_title": "audio",
+                "modality_B_title": "text",
+                "modality_A_logAbbr": "Aud",
+                "modality_B_logAbbr": "Txt",
+            },
+        )
+
+        all_img_feats = torch.cat([x["image_feat"] for x in outputs], dim=0)
+        img_score_per_audio = torch.matmul(
+            all_audio_feats.float(), all_img_feats.float().T
+        ).cpu()
+        score_per_img = img_score_per_audio.T
+
+        AI_answers = all_audio_feats_id
+        IA_answers = all_img_feats_id
+        # Log metrics for speech-image retrieval
+        super().reportRetrieval(
+            score_per_A=img_score_per_audio,
+            score_per_B=score_per_img,
+            AB_answers=AI_answers,
+            BA_answers=IA_answers,
+            metadata={
+                "modality_A_title": "audio",
+                "modality_B_title": "image",
+                "modality_A_logAbbr": "Aud",
+                "modality_B_logAbbr": "Img",
+            },
+        )
+
+
+class ImgMean_SpeechText(KWClip_SpeechText):
+
+    def __init__(self, config: OrderedNamespace) -> None:
+        """init
+
+        Args:
+            config (OrderedNamespace): config of the model
+        """
+        super().__init__(config)
+        img_stats_np = np.load(config.model_settings.image_stats_path)
+        self.register_buffer(
+            "img_statistics", torch.tensor(img_stats_np, dtype=torch.float16)
+        )
+        self.cosine_loss_criterion = (
+            nn.CosineEmbeddingLoss()
+        )  # No margin because only pulling together.
+
+    def forward(self, batch):
+        wav = batch["wav"]
+        text = batch["text"]
+        id = batch["id"]
+        wav_len = batch["wav_len"]
+
+        # update device information to clip model
+        self.clip.update_device(self.device)
+
+        audio_feat, audio_len = self.forward_audio(wav, wav_len)
+
+        assert self.cascaded_branch is None, "Cascaded branch should not be defined"
+        assert self.parallel_branch is not None, "Parallel branch should be defined"
+
+        # Encode txt with frozen clip txt enc
+        text_feat = self.forward_text(text.view(-1, 77))
+
+        if self.txt_enc_proj_net is not None:
+            text_feat = self.txt_enc_proj_net(text_feat)
+
+        parallel_audio_feat = None
+
+        if self.parallel_branch is not None:
+            parallel_audio_feat = self.parallel_branch(
+                audio_feat=audio_feat,
+                audio_len=audio_len,
+            )
+            if self.p_branch_proj_net is not None:
+                parallel_audio_feat = self.p_branch_proj_net(parallel_audio_feat)
+
+        text_feat = text_feat / text_feat.norm(dim=-1, keepdim=True)
+
+        losses = {
+            "id": id,
+            "text_feat": text_feat,
+        }
+        log_metrics = {}
+
+        if parallel_audio_feat is not None:
+            parallel_audio_feat = parallel_audio_feat / parallel_audio_feat.norm(
+                dim=-1, keepdim=True
+            )
+            parallel_audio_feat = parallel_audio_feat + self.img_statistics.unsqueeze(0)
+            parallel_audio_feat = parallel_audio_feat / parallel_audio_feat.norm(
+                dim=-1, keepdim=True
+            )
+            losses["parallel_audio_feat"] = parallel_audio_feat
+
+        log_metrics.update(
+            {
+                "cl_temp": self.criterion.current_temperature,
+            }
+        )
+
+        return_dict = {
+            "parallel_audio_feat": parallel_audio_feat,
+            "text_feat": text_feat,
+            "id": id,
+        }
+
+        if not self.training:
+            img = batch["image"]
+            image_feat = self.forward_image(img)
+            image_feat = image_feat / image_feat.norm(dim=-1, keepdim=True)
+            return_dict["image_feat"] = image_feat
+
+        return (
+            losses,
+            log_metrics,
+            return_dict,
+        )
+
+    def compute_loss(self, input_feats: dict):
+        """compute the loss here
+
+        Args:
+            input_feats (dict): the feats required for computing loss
+        """
+        assert isinstance(input_feats, dict)
+        assert "id" in input_feats
+        assert "parallel_audio_feat" in input_feats
+        assert "text_feat" in input_feats
+
+        parallel_audio_feat = (
+            input_feats["parallel_audio_feat"].float()
+            if "parallel_audio_feat" in input_feats
+            else None
+        )
+        text_feat = input_feats["text_feat"].float()
+        id = input_feats["id"]
+
+        losses = {"loss": 0}
+
+        if self.config.model_settings.parallel_objective_weight > 0:
+            losses["p_cl_loss"] = self.criterion(
+                feat_A=parallel_audio_feat,
+                feat_B=text_feat,
+                index=id,
+            )
+            target = torch.ones(
+                parallel_audio_feat.shape[0], device=parallel_audio_feat.device
+            )
+            losses["cosine_loss"] = self.cosine_loss_criterion(
+                parallel_audio_feat, self.img_statistics.unsqueeze(0), target=target
+            )
+            losses["loss"] += (
+                self.config.model_settings.parallel_objective_weight
+                * losses["p_cl_loss"]
+                + self.config.model_settings.cosine_objective_weight
+                * losses["cosine_loss"]
+            )
+
+        return losses
+
+
+class TxtMean_SpeechText(KWClip_SpeechText):
+
+    def __init__(self, config: OrderedNamespace) -> None:
+        """init
+
+        Args:
+            config (OrderedNamespace): config of the model
+        """
+        super().__init__(config)
+        txt_stats_np = np.load(config.model_settings.text_stats_path)
+        self.register_buffer(
+            "txt_statistics", torch.tensor(txt_stats_np, dtype=torch.float16)
+        )
+        # self.cosine_loss_criterion = (
+        #     nn.CosineEmbeddingLoss()
+        # )  # No margin because only pulling together.
+
+    def forward(self, batch):
+        wav = batch["wav"]
+        text = batch["text"]
+        id = batch["id"]
+        wav_len = batch["wav_len"]
+
+        # update device information to clip model
+        self.clip.update_device(self.device)
+
+        audio_feat, audio_len = self.forward_audio(wav, wav_len)
+
+        assert self.cascaded_branch is None, "Cascaded branch should not be defined"
+        assert self.parallel_branch is not None, "Parallel branch should be defined"
+
+        # Encode txt with frozen clip txt enc
+        text_feat = self.forward_text(text.view(-1, 77))
+
+        if self.txt_enc_proj_net is not None:
+            text_feat = self.txt_enc_proj_net(text_feat)
+
+        parallel_audio_feat = None
+
+        if self.parallel_branch is not None:
+            parallel_audio_feat = self.parallel_branch(
+                audio_feat=audio_feat,
+                audio_len=audio_len,
+            )
+            if self.p_branch_proj_net is not None:
+                parallel_audio_feat = self.p_branch_proj_net(parallel_audio_feat)
+
+        text_feat = text_feat / text_feat.norm(dim=-1, keepdim=True)
+
+        losses = {
+            "id": id,
+            "text_feat": text_feat,
+        }
+        log_metrics = {}
+
+        if parallel_audio_feat is not None:
+            parallel_audio_feat = parallel_audio_feat / parallel_audio_feat.norm(
+                dim=-1, keepdim=True
+            )
+            # Move closer to the text mean
+            parallel_audio_feat = parallel_audio_feat + self.txt_statistics.unsqueeze(0)
+            parallel_audio_feat = parallel_audio_feat / parallel_audio_feat.norm(
+                dim=-1, keepdim=True
+            )
+            losses["parallel_audio_feat"] = parallel_audio_feat
+
+        log_metrics.update(
+            {
+                "cl_temp": self.criterion.current_temperature,
+            }
+        )
+
+        return_dict = {
+            "parallel_audio_feat": parallel_audio_feat,
+            "text_feat": text_feat,
+            "id": id,
+        }
+
+        if not self.training:
+            img = batch["image"]
+            image_feat = self.forward_image(img)
+            image_feat = image_feat / image_feat.norm(dim=-1, keepdim=True)
+            return_dict["image_feat"] = image_feat
+
+        return (
+            losses,
+            log_metrics,
+            return_dict,
+        )

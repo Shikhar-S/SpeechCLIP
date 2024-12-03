@@ -10,7 +10,12 @@ from pytorch_lightning.loggers import CSVLogger
 from torch.utils.data import DataLoader, random_split
 
 from ..base import OrderedNamespace
-from ..model import KWClip_GeneralTransformer
+from ..model import (
+    KWClip_GeneralTransformer,
+    KWClip_SpeechText,
+    ImgMean_SpeechText,
+    TxtMean_SpeechText,
+)
 from .base_task import BaseTask, TrainSpeechClipBaseTask
 
 
@@ -98,3 +103,19 @@ class TrainKWClip_GeneralSpeechText(TrainSpeechClipBaseTask):
 
     def run(self):
         super().run(KWClip_GeneralTransformer_SpeechText)
+
+
+class TrainImgMean_SpeechText(TrainSpeechClipBaseTask):
+    def __init__(self):
+        super().__init__()
+
+    def run(self):
+        super().run(ImgMean_SpeechText)
+
+
+class TrainTxtMean_SpeechText(TrainSpeechClipBaseTask):
+    def __init__(self):
+        super().__init__()
+
+    def run(self):
+        super().run(TxtMean_SpeechText)

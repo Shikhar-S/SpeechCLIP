@@ -1,6 +1,7 @@
 # Ref: https://github.com/wnhsu/ResDAVEnet-VQ/blob/master/dataloaders/image_caption_dataset.py
 # Author: David Harwath, Wei-Ning Hsu
 
+import whisper
 import logging
 import os
 import pickle
@@ -78,7 +79,9 @@ class BaseDataset(Dataset):
         """
 
         if self.load_audio:
-            waveform, _ = librosa.load(path, sr=self.target_sr)
+            waveform = whisper.load_audio(path)
+            # TODO(shikhar): This might not work for Whisper
+            # waveform, _ = librosa.load(path, sr=self.target_sr)
             if self.audio_transform is not None:
                 audio = self.audio_transform(waveform)
             else:

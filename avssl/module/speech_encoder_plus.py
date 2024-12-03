@@ -23,6 +23,10 @@ from ..data import random_crop_max_length
 from ..util import freeze_model, init_weights
 from .weighted_sum import WeightedSumLayer
 
+# from .whisper_utils import log_mel_spectrogram
+
+import whisper
+
 FEAT_SELECT_IDX_WEIGHTED_SUM_MODE = "weighted_sum"
 
 
@@ -632,3 +636,62 @@ class FairseqSpeechEncoder_Hubert(nn.Module):
             return_list.append(feat["hidden_states"])
 
         return tuple(return_list)
+
+
+class WhisperEncoder(nn.Module):
+    def __init__(self, model_name: str, trainable: bool = False, **kwargs):
+        super().__init__()
+        self.whisper_encoder = whisper.load_model(model_name).encoder
+        for name, param in self.whisper_encoder.named_parameters():
+            param.requires_grad = trainable
+        self.out_dim = 768
+        if model_name == "tiny":
+            self.whisper_dim = 384
+        else:
+            raise NotImplementedError(f"Whisper model {model_name} not implemented")
+
+        self.trainable = trainable
+        self.linear_layer = nn.Linear(self.whisper_dim, self.out_dim)
+        logger.info(f"Loaded whisper encoder ({model_name}). All arguments: {kwargs}")
+
+    def forward(
+        self,
+        wav: Union[torch.Tensor, list],
+        wav_len: Union[torch.Tensor, list] = [],
+        return_hidden_states: bool = False,
+    ) -> Tuple[Union[torch.Tensor, list], torch.Tensor]:
+        """
+        Args:
+            wav (Union[torch.Tensor, list]): List of waveforms. (L, )
+            wav_len (Union[torch.Tensor, list]): List of waveforms' lengths. Defaults to [].
+            return_hidden_states (bool, optional): Return hidden states. Defaults to False.
+        Returns:
+            Tuple[Union[torch.Tensor, list], torch.Tensor]: Hidden features and their lengths.
+        """
+        # Get mel spectrogram
+        assert (
+            return_hidden_states == False
+        ), "return_hidden_states is not supported for whisper"
+
+        audio = wav
+        audio = whisper.pad_or_trim(audio)
+        mel = whisper.log_mel_spectrogram(audio).to(wav.device)
+        encodings = self.whisper_encoder(mel.half())
+
+        # Create a tensor of shape (batch_size) with all elements as 1500. Whisper model has a fixed output length of 1500
+        encoding_len = torch.full(
+            (encodings.shape[0],), 1500, dtype=torch.long, device=wav.device
+        )
+        encodings = self.linear_layer(encodings)  # whisper_dim -> out_dim
+        return encodings, encoding_len
+
+    def trainable_params(self) -> list:
+        logging.info(
+            "Trainable Parameters were requested from whisper encoder with trainable = {}".format(
+                self.trainable
+            )
+        )
+        if self.trainable:
+            return list(self.parameters())
+        else:
+            return list(self.linear_layer.parameters())
