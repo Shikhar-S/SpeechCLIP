@@ -79,11 +79,13 @@ class TrainSpeechClipBaseTask(BaseTask):
             del self.args.dataset_root
 
             if self.args.load_model_config:
+                print("Loading model config from checkpoint")
                 config = model.config
                 config = config.to_dict()
                 config.update(vars(self.args))
                 config = OrderedNamespace(config)
             else:
+                print("Loading model config from supplied config file")
                 config = yaml.load(open(self.args.config, "r"), Loader=yaml.FullLoader)
                 config = OrderedNamespace([self.args, config])
             model.config = config

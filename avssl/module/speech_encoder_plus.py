@@ -676,6 +676,7 @@ class WhisperEncoder(nn.Module):
         audio = wav
         audio = whisper.pad_or_trim(audio)
         mel = whisper.log_mel_spectrogram(audio).to(wav.device)
+        # encodings = self.whisper_encoder(mel)  # (mel.half())
         encodings = self.whisper_encoder(mel.half())
 
         # Create a tensor of shape (batch_size) with all elements as 1500. Whisper model has a fixed output length of 1500

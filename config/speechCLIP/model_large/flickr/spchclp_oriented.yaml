@@ -1,7 +1,7 @@
 data:
   dataset:
     name: flickr
-    dataset_root: /compute/babel-5-27/sbharad2/data/FACC/flickr
+    dataset_root: /compute/babel-5-27/sbharad2/data/FACC/flickr # data/flickr
     text_file: Flickr8k.token.txt
     clip_image_transform: ViT-L/14
     load_image: true
@@ -14,6 +14,7 @@ data:
 model_settings:
   cascaded_objective_weight: 0.0
   parallel_objective_weight: 1.0
+  text_stats_path: data/flickr_stats/cloned.text_stats.CLIP_ViT_L_14.npy
   parallel_branch: 
     # name: integrate # [ "integrate", "individual" ]
     # integrate: add another [CLS] token for parallel objective

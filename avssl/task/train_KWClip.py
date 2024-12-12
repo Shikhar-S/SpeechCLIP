@@ -15,6 +15,8 @@ from ..model import (
     KWClip_SpeechText,
     ImgMean_SpeechText,
     TxtMean_SpeechText,
+    NormalizedSpeechImg_SpeechText,
+    TextMean_KWClip_GeneralTransformer,
 )
 from .base_task import BaseTask, TrainSpeechClipBaseTask
 
@@ -119,3 +121,19 @@ class TrainTxtMean_SpeechText(TrainSpeechClipBaseTask):
 
     def run(self):
         super().run(TxtMean_SpeechText)
+
+
+class TrainNormalizedSpeechImg_SpeechText(TrainSpeechClipBaseTask):
+    def __init__(self):
+        super().__init__()
+
+    def run(self):
+        super().run(NormalizedSpeechImg_SpeechText)
+
+
+class TrainTextMean_KWClip_GeneralTransformer(TrainSpeechClipBaseTask):
+    def __init__(self):
+        super().__init__()
+
+    def run(self):
+        super().run(TextMean_KWClip_GeneralTransformer)

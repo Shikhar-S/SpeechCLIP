@@ -19,6 +19,7 @@ model_settings:
   initialize_weights: false # xavier and normal give nan
   image_stats_path:  data/flickr_stats/ViT_B_32.npy
   text_stats_path: data/flickr_stats/text_stats.CLIP_ViT_B_32.npy
+  speech_stats_path: data/flickr_stats/speech_stats.contrastive_e208.npy
   parallel_branch:
     # name: integrate # [ "integrate", "individual" ]
     # integrate: add another [CLS] token for parallel objective

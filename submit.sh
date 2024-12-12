@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --cpus-per-task 5
+#SBATCH --cpus-per-task 4
 #SBATCH --mem-per-cpu=16G
 #SBATCH --job-name=m3l
 #SBATCH --partition=general
@@ -14,3 +14,4 @@ conda activate whispclip
 echo "Starting run: ${SLURM_JOB_NAME}.${SLURM_JOB_ID}"
 
 ./egs/model_base/parallel/train.sh "${SLURM_JOB_NAME}.${SLURM_JOB_ID}" $@
+# ./egs/model_base/parallel/resume_training.sh "${SLURM_JOB_NAME}.${SLURM_JOB_ID}" $@

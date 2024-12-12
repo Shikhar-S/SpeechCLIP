@@ -1,19 +1,21 @@
 data:
   dataset:
     name: flickr
-    dataset_root: /compute/babel-5-27/sbharad2/data/FACC/flickr
+    dataset_root: data/flickr
     text_file: Flickr8k.token.txt
-    clip_image_transform: ViT-L/14
+    clip_image_transform: ViT-B/32
     load_image: true
     load_audio: true
     tokenizeText: true
   batch_size: 256
-  dev_batch_size: 8
+  dev_batch_size: 128
   split_ratio: 0.9
 
 model_settings:
   cascaded_objective_weight: 0.0
   parallel_objective_weight: 1.0
+  initialize_weights: false # xavier and normal give nan
+  text_stats_path: data/flickr_stats/text_stats.CLIP_ViT_B_32.npy
   parallel_branch: 
     # name: integrate # [ "integrate", "individual" ]
     # integrate: add another [CLS] token for parallel objective
@@ -21,9 +23,9 @@ model_settings:
     transformer_type: TransformerEncoder
     transformer_args:
         n_layers: 1
-        d_model: 1024
+        d_model: 768
         nhead: 8
-        dim_feedforward: 4096
+        dim_feedforward: 3072
         dropout: 0.1
         activation: gelu
         layer_norm_eps: 1.0e-5
@@ -36,9 +38,9 @@ model_settings:
     transformer_type: MultiheadAttentionAndNorm #[TransformerEncoder, MultiheadAttentionAndNorm, RelTransformerEncoder]
     transformer_args:
         n_layers: 1
-        d_model: 1024
+        d_model: 768
         nhead: 1
-        dim_feedforward: 4096
+        dim_feedforward: 3072
         dropout: 0.1
         activation: gelu
         layer_norm_eps: 1.0e-5
@@ -71,7 +73,7 @@ cl_loss:
   type: MaskedContrastiveLoss # SupConLoss
   args:
     temperature: 0.07
-    temperature_trainable: true
+    temperature_trainable: False
     margin: 0.0
     dcl: false
     a2b:  true
@@ -88,7 +90,7 @@ retrieval:
 
 
 clip:
-  name: ViT-L/14
+  name: ViT-B/32
   image_encoder_trainable: false
   text_encoder_trainable: false
   reduce_subword_embbedding: ./avssl/data/flickr_stat/text_clip_vocab_usage_byfreq.npy  # npy file for the selected embedding ID and its frequency
@@ -96,13 +98,13 @@ clip:
 
 audio_encoder:
   type: FairseqHubert
-  name: hubert_large_ll60k
+  name: hubert
   pretrained: true
   trainable: false
   feat_select_idx: weighted_sum #last_hidden_state # all
   layer_drop: 0.0
   max_audio_len: 102400
-  normalize_hiddenstates: true
+  normalize_hiddenstates: false
   optim:
     name: Adam
     args:
@@ -117,16 +119,17 @@ audio_encoder:
 trainer:
   max_steps: 50000
   gradient_clip_val: 4
+  track_grad_norm: 2
   accumulate_grad_batches: 1
   check_val_every_n_epoch: 1
   precision: 16
   logger: wandb
   log_every_n_steps: 8
-  default_root_dir: exp/sphclip_large_p_flickr
+  default_root_dir: exp/sphclip_base_p_flickr
   num_sanity_val_steps: 0
   strategy: dp
+  limit_val_batches: 16
   # limit_train_batches: 8
-  # limit_val_batches: 8
 
 log_setting:
   log_detokenize_results: true # whether or not to save the results of detokenized vq output
@@ -134,5 +137,5 @@ log_setting:
   log_draw_pca_every_n_epoch: 10
 
 logger:
-  project: sphclip
+  project: TransitiveBind
 

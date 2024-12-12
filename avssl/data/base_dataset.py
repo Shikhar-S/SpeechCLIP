@@ -79,9 +79,8 @@ class BaseDataset(Dataset):
         """
 
         if self.load_audio:
-            waveform = whisper.load_audio(path)
-            # TODO(shikhar): This might not work for Whisper
-            # waveform, _ = librosa.load(path, sr=self.target_sr)
+            # waveform = whisper.load_audio(path)
+            waveform, _ = librosa.load(path, sr=self.target_sr)
             if self.audio_transform is not None:
                 audio = self.audio_transform(waveform)
             else:

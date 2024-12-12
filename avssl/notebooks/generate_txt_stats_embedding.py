@@ -25,7 +25,7 @@ assert len(texts) == (len(train_image_names) * 5), (
 )
 print(len(texts), "texts loaded")
 
-clip_model = "ViT-B/32"
+clip_model = "ViT-L/14"  # "ViT-B/32"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model, preprocess = clip.load(clip_model, device=device)
 
@@ -37,9 +37,9 @@ with torch.no_grad():
         text_features = model.encode_text(text)
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)
         if all_text_features is None:
-            all_text_features = text_features
+            all_text_features = text_features.clone()
         else:
-            all_text_features += text_features
+            all_text_features += text_features.clone()
         c += 1
         if c % 100 == 0:
             print(c)
@@ -47,8 +47,9 @@ with torch.no_grad():
 all_text_features = all_text_features / c
 all_text_features = all_text_features / all_text_features.norm(dim=-1, keepdim=True)
 
+
 import numpy as np
 
-save_path = f"/data/user_data/sbharad2/SpeechCLIP/data/flickr_stats/text_stats.CLIP_{clip_model.replace('/','_').replace('-','_')}.npy"
+save_path = f"/data/user_data/sbharad2/SpeechCLIP/data/flickr_stats/cloned.text_stats.CLIP_{clip_model.replace('/','_').replace('-','_')}.npy"
 np.save(save_path, all_text_features.squeeze(0).cpu().numpy())
 print((all_text_features**2).sum(dim=-1), c)

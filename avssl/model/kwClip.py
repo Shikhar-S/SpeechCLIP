@@ -36,6 +36,8 @@ __all__ = [
     "KWClip_SpeechText",
     "ImgMean_SpeechText",
     "TxtMean_SpeechText",
+    "NormalizedSpeechImg_SpeechText",
+    "TextMean_KWClip_GeneralTransformer",
 ]
 
 """METRIC_REDUCEFN_MAPPING
@@ -1526,6 +1528,77 @@ class KWClip_GeneralTransformer(KWClipBase):
         return self.cascaded_branch.getAttentionMap(audio_feat, audio_len)
 
 
+class TextMean_KWClip_GeneralTransformer(KWClip_GeneralTransformer):
+    def __init__(self, config: OrderedNamespace) -> None:
+        """init
+
+        Args:
+            config (OrderedNamespace): config of the model
+        """
+        super().__init__(config)
+        txt_stats_np = np.load(config.model_settings.text_stats_path)
+        self.register_buffer(
+            "txt_statistics", torch.tensor(txt_stats_np, dtype=torch.float16)
+        )
+        self.alpha = nn.Linear(txt_stats_np.shape[0], 1)
+
+    def forward(self, batch):
+        super_return = super().forward(batch)
+        assert self.parallel_branch is not None
+        speech_feature = super_return[2]["parallel_audio_feat"]
+        alpha_ = nn.functional.sigmoid(self.alpha(speech_feature))
+        speech_feature = alpha_ * self.txt_statistics.unsqueeze(0) + speech_feature
+        speech_feature = speech_feature / speech_feature.norm(dim=-1, keepdim=True)
+        super_return[2]["parallel_audio_feat"] = speech_feature
+        if not self.training:
+            text = batch["text"]
+            text_feature = self.forward_text(text.view(-1, 77))
+            text_feature = text_feature / text_feature.norm(dim=-1, keepdim=True)
+            super_return[2]["text_feat"] = text_feature
+        return super_return
+
+    def validation_epoch_end(self, outputs):
+        super().validation_epoch_end(
+            outputs
+        )  # Calulate retrieval metrics for image-audio
+        all_audio_feats = torch.cat([x["audio_feat"] for x in outputs], dim=0)
+        all_text_feats = torch.cat([x["text_feat"] for x in outputs], dim=0)
+
+        if "id" in outputs[0] and outputs[0]["id"] is not None:
+            all_ids = torch.cat([x["id"] for x in outputs], dim=0)
+        else:
+            all_ids = torch.arange(len(all_text_feats))
+        all_audio_feats_id = all_ids
+        all_text_feats_id = all_ids
+
+        assert len(all_text_feats) == len(
+            all_audio_feats
+        ), f"Mismatch in lengths between audio and text {len(all_audio_feats)} vs {len(all_text_feats)}"
+
+        # calculate dot product
+        txt_score_per_audio = torch.matmul(
+            all_audio_feats.float(), all_text_feats.float().T
+        ).cpu()
+        score_per_text = txt_score_per_audio.T
+        AT_answers = all_audio_feats_id
+        TA_answers = all_text_feats_id
+
+        # Log metrics for speech-text retrieval
+        super().reportRetrieval(
+            score_per_A=txt_score_per_audio,
+            score_per_B=score_per_text,
+            AB_answers=AT_answers,
+            BA_answers=TA_answers,
+            metadata={
+                "modality_A_title": "audio",
+                "modality_B_title": "text",
+                "modality_A_logAbbr": "Aud",
+                "modality_B_logAbbr": "Txt",
+            },
+        )
+
+
+# Baseline model: trained on speech-text with contrastive loss alone
 class KWClip_SpeechText(KWClip_GeneralTransformer):
 
     def __init__(self, config: OrderedNamespace) -> None:
@@ -1537,6 +1610,20 @@ class KWClip_SpeechText(KWClip_GeneralTransformer):
         super().__init__(config)
         self.txt_enc_proj_net = None
         # Load text encoder from clip and possibly a linear projection layer
+
+    def _extract_speech_features(self, wav, wav_len):
+        audio_feat, audio_len = self.forward_audio(wav, wav_len)
+        assert self.parallel_branch is not None
+        if self.parallel_branch is not None:
+            audio_feat = self.parallel_branch(
+                audio_feat=audio_feat,
+                audio_len=audio_len,
+            )
+            if self.p_branch_proj_net is not None:
+                audio_feat = self.p_branch_proj_net(audio_feat)
+
+        audio_feat = audio_feat / audio_feat.norm(dim=-1, keepdim=True)
+        return audio_feat
 
     def forward(self, batch):
         wav = batch["wav"]
@@ -1724,6 +1811,8 @@ class KWClip_SpeechText(KWClip_GeneralTransformer):
         )
 
 
+# This one has image mean setup for parallel branch
+# Commented out portion includes the speech-img_av cosine loss
 class ImgMean_SpeechText(KWClip_SpeechText):
 
     def __init__(self, config: OrderedNamespace) -> None:
@@ -1813,47 +1902,47 @@ class ImgMean_SpeechText(KWClip_SpeechText):
             return_dict,
         )
 
-    def compute_loss(self, input_feats: dict):
-        """compute the loss here
+    # def compute_loss(self, input_feats: dict):
+    #     """compute the loss here
 
-        Args:
-            input_feats (dict): the feats required for computing loss
-        """
-        assert isinstance(input_feats, dict)
-        assert "id" in input_feats
-        assert "parallel_audio_feat" in input_feats
-        assert "text_feat" in input_feats
+    #     Args:
+    #         input_feats (dict): the feats required for computing loss
+    #     """
+    #     assert isinstance(input_feats, dict)
+    #     assert "id" in input_feats
+    #     assert "parallel_audio_feat" in input_feats
+    #     assert "text_feat" in input_feats
 
-        parallel_audio_feat = (
-            input_feats["parallel_audio_feat"].float()
-            if "parallel_audio_feat" in input_feats
-            else None
-        )
-        text_feat = input_feats["text_feat"].float()
-        id = input_feats["id"]
+    #     parallel_audio_feat = (
+    #         input_feats["parallel_audio_feat"].float()
+    #         if "parallel_audio_feat" in input_feats
+    #         else None
+    #     )
+    #     text_feat = input_feats["text_feat"].float()
+    #     id = input_feats["id"]
 
-        losses = {"loss": 0}
+    #     losses = {"loss": 0}
 
-        if self.config.model_settings.parallel_objective_weight > 0:
-            losses["p_cl_loss"] = self.criterion(
-                feat_A=parallel_audio_feat,
-                feat_B=text_feat,
-                index=id,
-            )
-            target = torch.ones(
-                parallel_audio_feat.shape[0], device=parallel_audio_feat.device
-            )
-            losses["cosine_loss"] = self.cosine_loss_criterion(
-                parallel_audio_feat, self.img_statistics.unsqueeze(0), target=target
-            )
-            losses["loss"] += (
-                self.config.model_settings.parallel_objective_weight
-                * losses["p_cl_loss"]
-                + self.config.model_settings.cosine_objective_weight
-                * losses["cosine_loss"]
-            )
+    #     if self.config.model_settings.parallel_objective_weight > 0:
+    #         losses["p_cl_loss"] = self.criterion(
+    #             feat_A=parallel_audio_feat,
+    #             feat_B=text_feat,
+    #             index=id,
+    #         )
+    #         target = torch.ones(
+    #             parallel_audio_feat.shape[0], device=parallel_audio_feat.device
+    #         )
+    #         losses["cosine_loss"] = self.cosine_loss_criterion(
+    #             parallel_audio_feat, self.img_statistics.unsqueeze(0), target=target
+    #         )
+    #         losses["loss"] += (
+    #             self.config.model_settings.parallel_objective_weight
+    #             * losses["p_cl_loss"]
+    #             + self.config.model_settings.cosine_objective_weight
+    #             * losses["cosine_loss"]
+    #         )
 
-        return losses
+    #     return losses
 
 
 class TxtMean_SpeechText(KWClip_SpeechText):
@@ -1937,6 +2026,118 @@ class TxtMean_SpeechText(KWClip_SpeechText):
         if not self.training:
             img = batch["image"]
             image_feat = self.forward_image(img)
+            image_feat = image_feat / image_feat.norm(dim=-1, keepdim=True)
+            return_dict["image_feat"] = image_feat
+
+        return (
+            losses,
+            log_metrics,
+            return_dict,
+        )
+
+
+class NormalizedSpeechImg_SpeechText(KWClip_SpeechText):
+
+    def __init__(self, config: OrderedNamespace) -> None:
+        """init
+
+        Args:
+            config (OrderedNamespace): config of the model
+        """
+        super().__init__(config)
+        # image_stats_path='data/flickr_stats/ViT_B_32.npy'
+        # img_stats_np = np.load(image_stats_path)
+        # self.register_buffer(
+        #     "img_statistics", torch.tensor(img_stats_np, dtype=torch.float16)
+        # )
+        # speech_stats_path = "data/flickr_stats/speech_stats.contrastive_e208.npy"
+        # speech_stats_np = np.load(speech_stats_path)
+        # self.register_buffer(
+        #     "speech_statistics", torch.tensor(speech_stats_np, dtype=torch.float16)
+        # )
+
+    def forward(self, batch):
+
+        wav = batch["wav"]
+        text = batch["text"]
+        id = batch["id"]
+        wav_len = batch["wav_len"]
+
+        # update device information to clip model
+        self.clip.update_device(self.device)
+
+        image_stats_path = "data/flickr_stats/ViT_B_32.npy"
+        img_stats_np = np.load(image_stats_path)
+        img_statistics = torch.tensor(img_stats_np, dtype=torch.float16).to(wav.device)
+
+        speech_stats_path = "data/flickr_stats/speech_stats.contrastive_e208.npy"
+        speech_stats_np = np.load(speech_stats_path)
+        speech_statistics = torch.tensor(speech_stats_np, dtype=torch.float16).to(
+            wav.device
+        )
+
+        audio_feat, audio_len = self.forward_audio(wav, wav_len)
+
+        assert self.cascaded_branch is None, "Cascaded branch should not be defined"
+        assert self.parallel_branch is not None, "Parallel branch should be defined"
+
+        # Encode txt with frozen clip txt enc
+        text_feat = self.forward_text(text.view(-1, 77))
+
+        if self.txt_enc_proj_net is not None:
+            text_feat = self.txt_enc_proj_net(text_feat)
+
+        parallel_audio_feat = None
+
+        if self.parallel_branch is not None:
+            parallel_audio_feat = self.parallel_branch(
+                audio_feat=audio_feat,
+                audio_len=audio_len,
+            )
+            if self.p_branch_proj_net is not None:
+                parallel_audio_feat = self.p_branch_proj_net(parallel_audio_feat)
+
+        txt_stats_path = "data/flickr_stats/text_stats.CLIP_ViT_B_32.npy"
+        txt_stats_np = np.load(txt_stats_path)
+        txt_statistics = torch.tensor(txt_stats_np, dtype=torch.float16).to(wav.device)
+
+        text_feat = text_feat / text_feat.norm(dim=-1, keepdim=True)
+        text_feat = text_feat - txt_statistics.unsqueeze(0)
+        text_feat = text_feat / text_feat.norm(dim=-1, keepdim=True)
+
+        losses = {
+            "id": id,
+            "text_feat": text_feat,
+        }
+        log_metrics = {}
+
+        if parallel_audio_feat is not None:
+            parallel_audio_feat = parallel_audio_feat / parallel_audio_feat.norm(
+                dim=-1, keepdim=True
+            )
+            parallel_audio_feat = parallel_audio_feat - speech_statistics.unsqueeze(0)
+            parallel_audio_feat = parallel_audio_feat / parallel_audio_feat.norm(
+                dim=-1, keepdim=True
+            )
+            losses["parallel_audio_feat"] = parallel_audio_feat
+
+        log_metrics.update(
+            {
+                "cl_temp": self.criterion.current_temperature,
+            }
+        )
+
+        return_dict = {
+            "parallel_audio_feat": parallel_audio_feat,
+            "text_feat": text_feat,
+            "id": id,
+        }
+
+        if not self.training:
+            img = batch["image"]
+            image_feat = self.forward_image(img)
+            image_feat = image_feat / image_feat.norm(dim=-1, keepdim=True)
+            image_feat = image_feat - img_statistics.unsqueeze(0)
             image_feat = image_feat / image_feat.norm(dim=-1, keepdim=True)
             return_dict["image_feat"] = image_feat
 
